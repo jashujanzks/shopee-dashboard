@@ -37,6 +37,8 @@ if order_file:
 
     # Hitung HPP total
     df_order["HPP_satuan"] = df_order[product_col].map(hpp_data)
+    # pastikan HPP numerik dan aman
+    df_order["HPP_satuan"] = pd.to_numeric(df_order["HPP_satuan"], errors="coerce").fillna(0)
     df_order["HPP_total"] = df_order["HPP_satuan"]
     hpp_total = df_order["HPP_total"].sum()
 
