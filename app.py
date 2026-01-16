@@ -1,10 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from fpdf import FPDF
+from io import BytesIO
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
 
 # =====================================================
-# CONFIG
+# PAGE CONFIG
 # =====================================================
 st.set_page_config(
     page_title="Dashboard Keuangan Shopee – Accrual Based (ZKS)",
@@ -12,16 +15,16 @@ st.set_page_config(
 )
 
 st.title("📊 Dashboard Keuangan Shopee – Accrual Based (ZKS)")
-st.caption("Fokus: profit real, cashflow jelas, iklan tidak bias")
+st.caption("Dashboard internal | Fokus angka | Tanpa bias | Siap ambil keputusan")
 
 # =====================================================
-# HELPER FUNCTIONS (ANTI ERROR & STRING BUG)
+# HELPER FUNCTIONS (ANTI ERROR TOTAL)
 # =====================================================
-def safe_read(uploaded_file):
+def safe_read(file):
     try:
-        if uploaded_file.name.endswith(".csv"):
-            return pd.read_csv(uploaded_file)
-        return pd.read_excel(uploaded_file)
+        if file.name.endswith(".csv"):
+            return pd.read_csv(file)
+        return pd.read_excel(file)
     except:
         return pd.DataFrame()
 
@@ -32,7 +35,7 @@ def force_numeric(series):
         .str.replace(".", "", regex=False)
         .str.replace(",", "", regex=False)
         .str.replace(" ", "", regex=False)
-        .replace("nan", "0")
+        .replace(["nan", "None", ""], "0")
         .astype(float)
     )
 
@@ -48,16 +51,16 @@ def find_col(df, keywords):
 # =====================================================
 st.sidebar.header("📂 Upload Data")
 
-order_file = st.sidebar.file_uploader("Order All Shopee (WAJIB)", type=["xlsx", "csv"])
-income_file = st.sidebar.file_uploader("Income Shopee (Opsional)", type=["xlsx", "csv"])
-ads_file = st.sidebar.file_uploader("Data Iklan (Opsional)", type=["xlsx", "csv"])
+order_file = st.sidebar.file_uploader("Order All Shopee (WAJIB)", ["xlsx", "csv"])
+income_file = st.sidebar.file_uploader("Income Shopee (Opsional)", ["xlsx", "csv"])
+ads_file = st.sidebar.file_uploader("Data Iklan (Opsional)", ["xlsx", "csv"])
 
 if not order_file:
     st.warning("⚠️ Upload Order All Shopee dulu.")
     st.stop()
 
 # =====================================================
-# LOAD & CLEAN ORDER DATA
+# LOAD ORDER ALL
 # =====================================================
 orders = safe_read(order_file)
 
@@ -81,9 +84,9 @@ orders_valid = orders[
 omzet_accrual = orders_valid[amount_col].sum()
 
 # =====================================================
-# PRODUK & HPP INPUT
+# HPP INPUT PER PRODUK
 # =====================================================
-produk_summary = (
+produk = (
     orders_valid
     .groupby(product_col)
     .agg(
@@ -93,27 +96,29 @@ produk_summary = (
     .reset_index()
 )
 
-st.subheader("📦 Input HPP per Produk")
-hpp_input = st.data_editor(
-    produk_summary.assign(HPP_Satuan=0),
-    num_rows="fixed"
+st.subheader("📦 Input HPP Satuan per Produk")
+
+hpp_table = st.data_editor(
+    produk.assign(HPP_Satuan=0),
+    num_rows="fixed",
+    use_container_width=True
 )
 
-hpp_input["HPP_Satuan"] = force_numeric(hpp_input["HPP_Satuan"])
-hpp_input["HPP_Total"] = hpp_input["HPP_Satuan"] * hpp_input["jumlah_order"]
-hpp_input["Profit_Produk"] = hpp_input["omzet_produk"] - hpp_input["HPP_Total"]
+hpp_table["HPP_Satuan"] = force_numeric(hpp_table["HPP_Satuan"])
+hpp_table["HPP_Total"] = hpp_table["HPP_Satuan"] * hpp_table["jumlah_order"]
+hpp_table["Profit_Produk"] = hpp_table["omzet_produk"] - hpp_table["HPP_Total"]
 
 # =====================================================
 # PROFIT PER PRODUK (AUTO WARNA)
 # =====================================================
-def color_profit(val):
+def highlight_profit(val):
     if val < 0:
         return "background-color:#ffcccc"
     return "background-color:#ccffcc"
 
 st.subheader("💰 Profit per Produk")
 st.dataframe(
-    hpp_input.style.applymap(color_profit, subset=["Profit_Produk"]),
+    hpp_table.style.applymap(highlight_profit, subset=["Profit_Produk"]),
     use_container_width=True
 )
 
@@ -143,18 +148,18 @@ if biaya_iklan > 0:
 # =====================================================
 # PROFIT UTAMA
 # =====================================================
-hpp_total = hpp_input["HPP_Total"].sum()
+hpp_total = hpp_table["HPP_Total"].sum()
 profit_kotor = omzet_accrual - hpp_total
 profit_bersih = profit_kotor - biaya_iklan
 
-st.subheader("📊 Ringkasan Utama")
-col1, col2, col3, col4, col5 = st.columns(5)
+st.subheader("📊 Ringkasan Keuangan")
 
-col1.metric("Omzet (Accrual)", f"Rp {omzet_accrual:,.0f}")
-col2.metric("HPP Total", f"Rp {hpp_total:,.0f}")
-col3.metric("Profit Kotor", f"Rp {profit_kotor:,.0f}")
-col4.metric("Biaya Iklan", f"Rp {biaya_iklan:,.0f}")
-col5.metric("Profit Bersih", f"Rp {profit_bersih:,.0f}")
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Omzet (Accrual)", f"Rp {omzet_accrual:,.0f}")
+c2.metric("HPP Total", f"Rp {hpp_total:,.0f}")
+c3.metric("Profit Kotor", f"Rp {profit_kotor:,.0f}")
+c4.metric("Biaya Iklan", f"Rp {biaya_iklan:,.0f}")
+c5.metric("Profit Bersih", f"Rp {profit_bersih:,.0f}")
 
 st.markdown(f"**ROAS:** {roas:.2f} → {roas_status}")
 
@@ -176,40 +181,41 @@ if income_file:
         dana_belum_cair = income[belum_col].sum()
 
 st.subheader("💸 Cashflow")
-c1, c2 = st.columns(2)
-c1.metric("Dana Cair", f"Rp {dana_cair:,.0f}")
-c2.metric("Dana Belum Cair", f"Rp {dana_belum_cair:,.0f}")
+cc1, cc2 = st.columns(2)
+cc1.metric("Dana Cair", f"Rp {dana_cair:,.0f}")
+cc2.metric("Dana Belum Cair", f"Rp {dana_belum_cair:,.0f}")
 
 # =====================================================
-# EXPORT PDF (FORMAT ZKS)
+# EXPORT PDF – FORMAT ZKS (FINAL)
 # =====================================================
 def export_pdf():
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=11)
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer)
+    styles = getSampleStyleSheet()
+    content = []
 
-    pdf.cell(0, 8, "Laporan Keuangan Shopee – ZKS", ln=True)
-    pdf.ln(3)
+    def p(text):
+        content.append(Paragraph(text, styles["Normal"]))
 
-    def line(label, value):
-        pdf.cell(0, 7, f"{label}: Rp {value:,.0f}", ln=True)
+    p("<b>Laporan Keuangan Shopee – ZKS</b><br/><br/>")
+    p(f"Omzet (Accrual): Rp {omzet_accrual:,.0f}<br/>")
+    p(f"HPP Total: Rp {hpp_total:,.0f}<br/>")
+    p(f"Profit Kotor: Rp {profit_kotor:,.0f}<br/>")
+    p(f"Biaya Iklan: Rp {biaya_iklan:,.0f}<br/>")
+    p(f"Profit Bersih: Rp {profit_bersih:,.0f}<br/>")
+    p(f"Dana Cair: Rp {dana_cair:,.0f}<br/>")
+    p(f"Dana Belum Cair: Rp {dana_belum_cair:,.0f}<br/>")
 
-    line("Omzet (Accrual)", omzet_accrual)
-    line("HPP Total", hpp_total)
-    line("Profit Kotor", profit_kotor)
-    line("Biaya Iklan", biaya_iklan)
-    line("Profit Bersih", profit_bersih)
-    line("Dana Cair", dana_cair)
-    line("Dana Belum Cair", dana_belum_cair)
-
-    return pdf.output(dest="S").encode("latin-1")
+    doc.build(content)
+    buffer.seek(0)
+    return buffer
 
 st.divider()
 if st.button("📄 Export PDF – Format ZKS"):
-    pdf_bytes = export_pdf()
+    pdf_file = export_pdf()
     st.download_button(
-        label="Download PDF",
-        data=pdf_bytes,
+        "Download PDF",
+        pdf_file,
         file_name="Laporan_Keuangan_Shopee_ZKS.pdf",
         mime="application/pdf"
     )
